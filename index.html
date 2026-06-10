@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG ⇄ DXF — Vector Exchange</title>
+<meta name="description" content="Convert SVG to DXF and DXF to SVG entirely in your browser. Built for laser cutters and CNC.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --blue-deep:#13315C;
+  --blue-shadow:#0B2342;
+  --grid-line:rgba(214,228,247,.10);
+  --grid-major:rgba(214,228,247,.18);
+  --paper:#F6F3EA;
+  --paper-edge:#E4DECB;
+  --ink:#1C2433;
+  --ink-soft:#5A6478;
+  --laser:#E5341F;
+  --laser-dim:#B5311F;
+  --ok:#2E7D4F;
+  --frame:rgba(229,236,246,.55);
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --disp:'Archivo',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--disp);
+  background:
+    linear-gradient(var(--grid-major) 1px, transparent 1px) 0 0/120px 120px,
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) 0 0/120px 120px,
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/24px 24px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/24px 24px,
+    radial-gradient(120% 90% at 50% 0%, #1A3C6E 0%, var(--blue-deep) 55%, var(--blue-shadow) 100%);
+  color:#E8EEF7;
+  min-height:100%;
+  padding:clamp(10px,2.2vw,28px);
+}
+.sheet{
+  position:relative;
+  min-height:calc(100vh - clamp(20px,4.4vw,56px));
+  border:1.5px solid var(--frame);
+  outline:1px solid var(--frame);
+  outline-offset:5px;
+  padding:clamp(16px,3vw,44px) clamp(16px,3.4vw,52px) clamp(120px,16vh,150px);
+  display:flex;flex-direction:column;gap:26px;
+}
+.regmark{position:absolute;width:18px;height:18px;pointer-events:none}
+.regmark::before,.regmark::after{content:"";position:absolute;background:var(--frame)}
+.regmark::before{left:50%;top:0;width:1px;height:100%}
+.regmark::after{top:50%;left:0;height:1px;width:100%}
+.regmark.tl{top:-9px;left:-9px}.regmark.tr{top:-9px;right:-9px}
+.regmark.bl{bottom:-9px;left:-9px}.regmark.br{bottom:-9px;right:-9px}
+
+header .eyebrow{
+  font:600 11px/1 var(--mono);letter-spacing:.32em;color:#9FB4D4;text-transform:uppercase;
+}
+h1{
+  font-family:var(--disp);
+  font-variation-settings:'wdth' 118;
+  font-weight:850;
+  font-size:clamp(34px,5.2vw,62px);
+  letter-spacing:-.01em;
+  margin-top:8px;
+  display:flex;align-items:center;gap:.35em;flex-wrap:wrap;
+}
+h1 .arrows{color:var(--laser);font-weight:400;transform:translateY(-2px)}
+header p.sub{margin-top:10px;max-width:62ch;color:#BACBE6;font-size:15px;line-height:1.55}
+header p.sub strong{color:#fff;font-weight:600}
+
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:26px;align-items:start;flex:1}
+@media (max-width:980px){main{grid-template-columns:1fr}}
+
+/* ---- drop zone / drawing area ---- */
+.bench{position:relative}
+.drop{
+  position:relative;
+  background:var(--paper);
+  color:var(--ink);
+  border:1px solid var(--paper-edge);
+  box-shadow:0 18px 40px rgba(4,14,30,.45), inset 0 0 0 1px rgba(255,255,255,.6);
+  min-height:380px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  padding:34px;cursor:pointer;text-align:center;
+}
+.drop::after{
+  content:"";position:absolute;inset:12px;border:1.5px dashed #B9B19A;pointer-events:none;
+  transition:border-color .15s ease;
+}
+.drop.dragover::after{border-color:var(--laser)}
+.drop.dragover{box-shadow:0 18px 40px rgba(4,14,30,.45),0 0 0 3px rgba(229,52,31,.35)}
+.drop:focus-visible{outline:3px solid var(--laser);outline-offset:3px}
+.drop .crosshair{position:absolute;width:14px;height:14px;opacity:.45}
+.drop .crosshair::before{content:"";position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--ink)}
+.drop .crosshair::after{content:"";position:absolute;top:50%;left:0;height:1px;width:100%;background:var(--ink)}
+.drop .c-tl{top:20px;left:20px}.drop .c-tr{top:20px;right:20px}
+.drop .c-bl{bottom:20px;left:20px}.drop .c-br{bottom:20px;right:20px}
+.drop .glyph{font:500 13px var(--mono);letter-spacing:.22em;color:var(--ink-soft);text-transform:uppercase}
+.drop h2{font-weight:800;font-variation-settings:'wdth' 110;font-size:clamp(20px,2.6vw,28px)}
+.drop .hint{font:400 13px/1.6 var(--mono);color:var(--ink-soft)}
+.drop .hint b{color:var(--laser);font-weight:600}
+.drop input{display:none}
+
+/* preview state */
+.previewWrap{display:none;background:var(--paper);border:1px solid var(--paper-edge);
+  box-shadow:0 18px 40px rgba(4,14,30,.45);padding:18px}
+.previewWrap.active{display:block}
+.previewBar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+  border-bottom:1px solid #DDD5BF;padding-bottom:12px;margin-bottom:12px}
+.previewBar .fname{font:600 13px var(--mono);color:var(--ink);word-break:break-all}
+.previewBar .dim{font:400 12px var(--mono);color:var(--ink-soft)}
+#previewBox{background:
+  linear-gradient(rgba(28,36,51,.06) 1px,transparent 1px) 0 0/20px 20px,
+  linear-gradient(90deg,rgba(28,36,51,.06) 1px,transparent 1px) 0 0/20px 20px,#FCFAF3;
+  border:1px solid #E2DAC4;min-height:300px;max-height:56vh;display:flex;align-items:center;justify-content:center;
+  overflow:auto;padding:14px}
+#previewBox svg{max-width:100%;max-height:52vh;height:auto}
+.benchActions{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
+button.primary{
+  font:700 14px var(--disp);letter-spacing:.06em;text-transform:uppercase;
+  background:var(--laser);color:#fff;border:none;padding:14px 26px;cursor:pointer;
+  box-shadow:0 4px 0 var(--laser-dim);transition:transform .08s ease, box-shadow .08s ease;
+}
+button.primary:hover{transform:translateY(-1px)}
+button.primary:active{transform:translateY(2px);box-shadow:0 1px 0 var(--laser-dim)}
+button.primary:focus-visible{outline:3px solid #fff;outline-offset:2px}
+button.ghost{
+  font:600 13px var(--mono);background:transparent;color:var(--ink);border:1.5px solid var(--ink);
+  padding:13px 20px;cursor:pointer;
+}
+button.ghost:hover{background:rgba(28,36,51,.07)}
+.previewWrap button.ghost{color:var(--ink);border-color:#8e886f}
+
+/* ---- side panel ---- */
+.panel{background:rgba(9,24,48,.55);border:1px solid var(--frame);padding:20px 20px 24px;backdrop-filter:blur(2px)}
+.panel h3{font:600 11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:#9FB4D4;
+  border-bottom:1px solid var(--frame);padding-bottom:10px;margin-bottom:16px}
+.field{margin-bottom:18px}
+.field label{display:block;font:600 12px var(--mono);letter-spacing:.08em;color:#D6E2F4;margin-bottom:7px}
+.field select{
+  width:100%;font:500 13px var(--mono);color:#E8EEF7;background:#0E2748;border:1px solid var(--frame);
+  padding:9px 10px;appearance:auto}
+.field select:focus-visible{outline:2px solid var(--laser)}
+.field .row{display:flex;align-items:center;gap:12px}
+input[type=range]{flex:1;accent-color:var(--laser)}
+#tolOut{font:600 13px var(--mono);min-width:74px;text-align:right;color:#fff}
+.field .note{font:400 11.5px/1.6 var(--mono);color:#8FA6C8;margin-top:6px}
+.log{margin-top:6px}
+.log h3{margin-top:8px}
+.log ul{list-style:none;font:400 12.5px/1.9 var(--mono);color:#CCDAF0}
+.log li::before{content:"— ";color:var(--laser)}
+.log li.warn{color:#F2C14E}
+.log li.empty{color:#6E84A8}
+.log li.empty::before{content:"· "}
+
+/* ---- title block ---- */
+.titleblock{
+  position:absolute;right:-1.5px;bottom:-1.5px;display:grid;
+  grid-template-columns:repeat(4,minmax(110px,1fr));
+  border:1.5px solid var(--frame);background:rgba(9,24,48,.78);backdrop-filter:blur(2px);
+}
+.tb{padding:10px 14px 12px;border-left:1px solid var(--frame)}
+.tb:first-child{border-left:none}
+.tb .k{font:600 9.5px var(--mono);letter-spacing:.26em;color:#8FA6C8;text-transform:uppercase}
+.tb .v{font:700 15px var(--disp);font-variation-settings:'wdth' 112;color:#fff;margin-top:4px}
+.tb .v.red{color:var(--laser)}
+@media (max-width:980px){
+  .titleblock{position:static;margin-top:10px;grid-template-columns:repeat(2,1fr)}
+  .sheet{padding-bottom:clamp(16px,3vw,44px)}
+  .tb{border-top:1px solid var(--frame)}
+}
+footer.credit{margin-top:18px;font:400 11px var(--mono);color:#6E84A8}
+footer.credit a{color:#9FB4D4}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <span class="regmark tl"></span><span class="regmark tr"></span>
+  <span class="regmark bl"></span><span class="regmark br"></span>
+
+  <header>
+    <div class="eyebrow">Shop utility · Vector exchange · No upload — runs in your browser</div>
+    <h1>SVG <span class="arrows">⇄</span> DXF</h1>
+    <p class="sub">Drop a file and get the other format. <strong>SVG → DXF</strong> flattens paths, shapes, and transforms into clean R12 polylines and circles that laser software reads happily. <strong>DXF → SVG</strong> rebuilds lines, polylines, arcs, circles, ellipses, and splines as scalable vectors. Your file never leaves this page.</p>
+  </header>
+
+  <main>
+    <section class="bench">
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose or drop an SVG or DXF file">
+        <span class="crosshair c-tl"></span><span class="crosshair c-tr"></span>
+        <span class="crosshair c-bl"></span><span class="crosshair c-br"></span>
+        <div class="glyph">Drawing area</div>
+        <h2>Drop an .svg or .dxf here</h2>
+        <div class="hint">or click to browse · direction is detected from the file<br>red strokes stay <b>red</b> — cut-line convention preserved</div>
+        <input type="file" id="file" accept=".svg,.dxf,image/svg+xml">
+      </div>
+
+      <div class="previewWrap" id="previewWrap">
+        <div class="previewBar">
+          <span class="fname" id="outName">—</span>
+          <span class="dim" id="outDim"></span>
+        </div>
+        <div id="previewBox" aria-label="Converted geometry preview"></div>
+        <div class="benchActions">
+          <button class="primary" id="downloadBtn">Download</button>
+          <button class="ghost" id="resetBtn">Convert another file</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h3>Setup</h3>
+      <div class="field">
+        <label for="units">SVG unit interpretation</label>
+        <select id="units">
+          <option value="auto" selected>Auto — read from width/viewBox</option>
+          <option value="mm">1 user unit = 1 mm</option>
+          <option value="px">px — 96 per inch (SVG default)</option>
+          <option value="in">1 user unit = 1 inch</option>
+        </select>
+        <div class="note">Used when converting SVG → DXF. DXF output is always in millimeters; DXF input units are read from the file header (mm assumed if unspecified).</div>
+      </div>
+      <div class="field">
+        <label for="tol">Curve smoothness</label>
+        <div class="row">
+          <input type="range" id="tol" min="0.01" max="0.5" step="0.01" value="0.1">
+          <output id="tolOut" for="tol">0.10 mm</output>
+        </div>
+        <div class="note">Maximum deviation when flattening béziers and arcs to polylines. Smaller = smoother and larger files.</div>
+      </div>
+      <div class="log">
+        <h3>Conversion notes</h3>
+        <ul id="log"><li class="empty">Waiting for a file.</li></ul>
+      </div>
+    </aside>
+  </main>
+
+  <div class="titleblock" role="contentinfo">
+    <div class="tb"><div class="k">Tool</div><div class="v">Vector Exchange</div></div>
+    <div class="tb"><div class="k">Formats</div><div class="v">SVG · DXF R12</div></div>
+    <div class="tb"><div class="k">Output units</div><div class="v">Millimeters</div></div>
+    <div class="tb"><div class="k">Rev</div><div class="v red">A — Sheet 1/1</div></div>
+  </div>
+</div>
+
+<script id="core">
+/* =========================================================================
+   CORE CONVERSION ENGINE  (no DOM access except DOMParser in svgToShapes)
+   ========================================================================= */
+"use strict";
+
+/* ---------- small math ---------- */
+const MAT_ID = [1,0,0,1,0,0];
+function matMul(m,n){return [
+  m[0]*n[0]+m[2]*n[1], m[1]*n[0]+m[3]*n[1],
+  m[0]*n[2]+m[2]*n[3], m[1]*n[2]+m[3]*n[3],
+  m[0]*n[4]+m[2]*n[5]+m[4], m[1]*n[4]+m[3]*n[5]+m[5]];}
+function matApply(m,p){return [m[0]*p[0]+m[2]*p[1]+m[4], m[1]*p[0]+m[3]*p[1]+m[5]];}
+function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+
+function parseTransform(str){
+  let m = MAT_ID.slice();
+  if(!str) return m;
+  const re=/(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g; let t;
+  while((t=re.exec(str))){
+    const a=t[2].split(/[\s,]+/).filter(s=>s.length).map(Number);
+    let n=MAT_ID.slice();
+    switch(t[1]){
+      case "matrix": if(a.length===6) n=a; break;
+      case "translate": n=[1,0,0,1,a[0]||0,a[1]||0]; break;
+      case "scale": n=[a[0],0,0,(a.length>1?a[1]:a[0]),0,0]; break;
+      case "rotate":{
+        const r=(a[0]||0)*Math.PI/180, c=Math.cos(r), s=Math.sin(r);
+        n=[c,s,-s,c,0,0];
+        if(a.length>2){
+          n=matMul(matMul([1,0,0,1,a[1],a[2]],n),[1,0,0,1,-a[1],-a[2]]);
+        }
+        break;}
+      case "skewX": n=[1,0,Math.tan((a[0]||0)*Math.PI/180),1,0,0]; break;
+      case "skewY": n=[1,Math.tan((a[0]||0)*Math.PI/180),0,1,0,0]; break;
+    }
+    m=matMul(m,n);
+  }
+  return m;
+}
+
+/* ---------- SVG path d -> flattened subpaths ---------- */
+function flattenCubic(p0,p1,p2,p3,tol,out,depth){
+  // flatness: control point distance from chord
+  const dx=p3[0]-p0[0], dy=p3[1]-p0[1];
+  let d1=Math.abs((p1[0]-p3[0])*dy-(p1[1]-p3[1])*dx);
+  let d2=Math.abs((p2[0]-p3[0])*dy-(p2[1]-p3[1])*dx);
+  if(depth>16 || (d1+d2)*(d1+d2) <= tol*tol*(dx*dx+dy*dy)){ out.push(p3); return; }
+  const mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
+  const p01=mid(p0,p1), p12=mid(p1,p2), p23=mid(p2,p3);
+  const p012=mid(p01,p12), p123=mid(p12,p23), p0123=mid(p012,p123);
+  flattenCubic(p0,p01,p012,p0123,tol,out,depth+1);
+  flattenCubic(p0123,p123,p23,p3,tol,out,depth+1);
+}
+function flattenQuad(p0,p1,p2,tol,out){
+  // promote to cubic
+  const c1=[p0[0]+2/3*(p1[0]-p0[0]), p0[1]+2/3*(p1[1]-p0[1])];
+  const c2=[p2[0]+2/3*(p1[0]-p2[0]), p2[1]+2/3*(p1[1]-p2[1])];
+  flattenCubic(p0,c1,c2,p2,tol,out,0);
+}
+function flattenArc(p0,rx,ry,phiDeg,laf,sweep,p1,tol,out){
+  // W3C endpoint -> center parameterization
+  rx=Math.abs(rx); ry=Math.abs(ry);
+  if(rx<1e-12||ry<1e-12||(p0[0]===p1[0]&&p0[1]===p1[1])){ out.push(p1); return; }
+  const phi=phiDeg*Math.PI/180, cosF=Math.cos(phi), sinF=Math.sin(phi);
+  const dx2=(p0[0]-p1[0])/2, dy2=(p0[1]-p1[1])/2;
+  const x1p= cosF*dx2+sinF*dy2, y1p=-sinF*dx2+cosF*dy2;
+  let l=(x1p*x1p)/(rx*rx)+(y1p*y1p)/(ry*ry);
+  if(l>1){ const s=Math.sqrt(l); rx*=s; ry*=s; }
+  const sign=(laf!==sweep)?1:-1;
+  let num=rx*rx*ry*ry-rx*rx*y1p*y1p-ry*ry*x1p*x1p;
+  if(num<0) num=0;
+  const co=sign*Math.sqrt(num/(rx*rx*y1p*y1p+ry*ry*x1p*x1p));
+  const cxp=co*rx*y1p/ry, cyp=-co*ry*x1p/rx;
+  const cx=cosF*cxp-sinF*cyp+(p0[0]+p1[0])/2;
+  const cy=sinF*cxp+cosF*cyp+(p0[1]+p1[1])/2;
+  const ang=(ux,uy,vx,vy)=>{
+    const d=Math.sqrt((ux*ux+uy*uy)*(vx*vx+vy*vy));
+    let c=Math.min(1,Math.max(-1,(ux*vx+uy*vy)/d));
+    let a=Math.acos(c);
+    if(ux*vy-uy*vx<0)a=-a;
+    return a;};
+  const th1=ang(1,0,(x1p-cxp)/rx,(y1p-cyp)/ry);
+  let dth=ang((x1p-cxp)/rx,(y1p-cyp)/ry,(-x1p-cxp)/rx,(-y1p-cyp)/ry);
+  if(!sweep&&dth>0)dth-=2*Math.PI;
+  if(sweep&&dth<0)dth+=2*Math.PI;
+  const rmax=Math.max(rx,ry);
+  const step=Math.max(0.03,2*Math.acos(Math.max(-1,1-tol/rmax)));
+  const n=Math.max(2,Math.ceil(Math.abs(dth)/step));
+  for(let i=1;i<=n;i++){
+    const t=th1+dth*i/n;
+    const x=rx*Math.cos(t), y=ry*Math.sin(t);
+    out.push([cosF*x-sinF*y+cx, sinF*x+cosF*y+cy]);
+  }
+}
+
+function parsePathToPolys(d,tol){
+  const tokens=d.match(/[a-df-zA-DF-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g)||[];
+  let i=0, cmd=null;
+  const num=()=>parseFloat(tokens[i++]);
+  const polys=[]; let pts=null;
+  let cur=[0,0], start=[0,0], prevC=null, prevQ=null;
+  const open=(p)=>{ if(pts&&pts.length>1)polys.push({pts,closed:false}); pts=[p.slice()]; };
+  const push=(p)=>{ pts.push(p); };
+  while(i<tokens.length){
+    if(/[a-zA-Z]/.test(tokens[i])) cmd=tokens[i++];
+    if(cmd==null)break;
+    const rel=cmd===cmd.toLowerCase(); const C=cmd.toUpperCase();
+    switch(C){
+      case "M":{
+        let x=num(),y=num(); if(rel){x+=cur[0];y+=cur[1];}
+        cur=[x,y]; start=cur.slice(); open(cur);
+        cmd=rel?"l":"L"; prevC=prevQ=null; break;}
+      case "L":{
+        let x=num(),y=num(); if(rel){x+=cur[0];y+=cur[1];}
+        cur=[x,y]; push(cur.slice()); prevC=prevQ=null; break;}
+      case "H":{
+        let x=num(); if(rel)x+=cur[0];
+        cur=[x,cur[1]]; push(cur.slice()); prevC=prevQ=null; break;}
+      case "V":{
+        let y=num(); if(rel)y+=cur[1];
+        cur=[cur[0],y]; push(cur.slice()); prevC=prevQ=null; break;}
+      case "C":{
+        let x1=num(),y1=num(),x2=num(),y2=num(),x=num(),y=num();
+        if(rel){x1+=cur[0];y1+=cur[1];x2+=cur[0];y2+=cur[1];x+=cur[0];y+=cur[1];}
+        const out=[]; flattenCubic(cur,[x1,y1],[x2,y2],[x,y],tol,out,0);
+        out.forEach(push); prevC=[x2,y2]; prevQ=null; cur=[x,y]; break;}
+      case "S":{
+        let x2=num(),y2=num(),x=num(),y=num();
+        if(rel){x2+=cur[0];y2+=cur[1];x+=cur[0];y+=cur[1];}
+        const x1=prevC?2*cur[0]-prevC[0]:cur[0], y1=prevC?2*cur[1]-prevC[1]:cur[1];
+        const out=[]; flattenCubic(cur,[x1,y1],[x2,y2],[x,y],tol,out,0);
+        out.forEach(push); prevC=[x2,y2]; prevQ=null; cur=[x,y]; break;}
+      case "Q":{
+        let x1=num(),y1=num(),x=num(),y=num();
+        if(rel){x1+=cur[0];y1+=cur[1];x+=cur[0];y+=cur[1];}
+        const out=[]; flattenQuad(cur,[x1,y1],[x,y],tol,out);
+        out.forEach(push); prevQ=[x1,y1]; prevC=null; cur=[x,y]; break;}
+      case "T":{
+        let x=num(),y=num(); if(rel){x+=cur[0];y+=cur[1];}
+        const x1=prevQ?2*cur[0]-prevQ[0]:cur[0], y1=prevQ?2*cur[1]-prevQ[1]:cur[1];
+        const out=[]; flattenQuad(cur,[x1,y1],[x,y],tol,out);
+        out.forEach(push); prevQ=[x1,y1]; prevC=null; cur=[x,y]; break;}
+      case "A":{
+        const rx=num(),ry=num(),rot=num(),laf=num()?1:0,sw=num()?1:0;
+        let x=num(),y=num(); if(rel){x+=cur[0];y+=cur[1];}
+        const out=[]; flattenArc(cur,rx,ry,rot,laf,sw,[x,y],tol,out);
+        out.forEach(push); prevC=prevQ=null; cur=[x,y]; break;}
+      case "Z":{
+        if(pts&&pts.length>1){ polys.push({pts,closed:true}); }
+        pts=null; cur=start.slice();
+        // a new subpath may follow without M; spec says it continues from start
+        pts=[cur.slice()];
+        prevC=prevQ=null; break;}
+      default: i++; // unknown, skip token
+    }
+  }
+  if(pts&&pts.length>1)polys.push({pts,closed:false});
+  return polys;
+}
+
+/* ---------- color handling ---------- */
+const NAMED={black:"#000000",white:"#ffffff",red:"#ff0000",green:"#008000",lime:"#00ff00",
+  blue:"#0000ff",yellow:"#ffff00",cyan:"#00ffff",aqua:"#00ffff",magenta:"#ff00ff",
+  fuchsia:"#ff00ff",gray:"#808080",grey:"#808080",orange:"#ffa500"};
+function cssToRGB(c){
+  if(!c)return null; c=c.trim().toLowerCase();
+  if(c==="none")return null;
+  if(NAMED[c])c=NAMED[c];
+  let m=c.match(/^#([0-9a-f]{3})$/); if(m){const h=m[1];return [parseInt(h[0]+h[0],16),parseInt(h[1]+h[1],16),parseInt(h[2]+h[2],16)];}
+  m=c.match(/^#([0-9a-f]{6})/); if(m){const h=m[1];return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+  m=c.match(/^rgb\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/); if(m)return [+m[1],+m[2],+m[3]];
+  return null;
+}
+const ACI=[ [1,[255,0,0]],[2,[255,255,0]],[3,[0,255,0]],[4,[0,255,255]],
+  [5,[0,0,255]],[6,[255,0,255]],[7,[0,0,0]],[8,[128,128,128]],[9,[192,192,192]] ];
+function rgbToACI(rgb){
+  if(!rgb)return 7;
+  let best=7,bd=Infinity;
+  for(const [code,c] of ACI){
+    const d=(c[0]-rgb[0])**2+(c[1]-rgb[1])**2+(c[2]-rgb[2])**2;
+    if(d<bd){bd=d;best=code;}
+  }
+  return best;
+}
+function aciToHex(code){
+  const m={1:"#FF0000",2:"#E0C000",3:"#00A000",4:"#00A0A0",5:"#0000FF",6:"#C000C0",
+    7:"#000000",8:"#808080",9:"#B0B0B0",250:"#333",251:"#505050",252:"#696969",
+    253:"#828282",254:"#BEBEBE",255:"#000000",0:"#000000"};
+  return m[code]||"#000000";
+}
+
+/* ---------- SVG document -> shapes (mm, y-down) ---------- */
+function unitToMM(u){
+  return {mm:1, cm:10, m:1000, in:25.4, pt:25.4/72, pc:25.4/6, px:25.4/96, q:0.25}[u];
+}
+function svgToShapes(svgText, opts){
+  opts=opts||{};
+  const tolMM=opts.tol||0.1;
+  const unitsChoice=opts.units||"auto";
+  const warnings=[]; const skipped={};
+  const doc=(opts.domParser||new DOMParser()).parseFromString(svgText,"image/svg+xml");
+  const root=doc.documentElement;
+  if(!root||root.nodeName.toLowerCase()!=="svg") throw new Error("Not a valid SVG file (no <svg> root).");
+
+  // determine user-unit -> mm
+  let scale=null, scaleSrc="";
+  const wAttr=root.getAttribute("width"), vbAttr=root.getAttribute("viewBox");
+  let vb=null;
+  if(vbAttr){ const v=vbAttr.split(/[\s,]+/).map(Number); if(v.length===4)vb=v; }
+  if(unitsChoice==="auto"){
+    if(wAttr){
+      const m=wAttr.trim().match(/^([\d.eE+-]+)\s*([a-z%]*)$/);
+      if(m){
+        const wv=parseFloat(m[1]); const u=m[2]||"px";
+        const f=unitToMM(u);
+        if(f&&vb&&vb[2]>0){ scale=wv*f/vb[2]; scaleSrc=`width="${wAttr}" / viewBox`; }
+        else if(f&&!vb){ scale=f; scaleSrc=`width unit "${u}"`; }
+      }
+    }
+    if(scale==null){ scale=unitToMM("px"); scaleSrc="fallback: px @ 96/in"; }
+  }else{
+    scale=unitToMM(unitsChoice)||1; scaleSrc=`manual: 1 unit = ${unitsChoice}`;
+  }
+  const tol=tolMM/scale; // tolerance in user units
+
+  // root viewBox translation
+  let rootM=MAT_ID.slice();
+  if(vb){ rootM=matMul(rootM,[1,0,0,1,-vb[0],-vb[1]]); }
+
+  const shapes=[]; // {type:'poly',pts,closed,color} | {type:'circle',cx,cy,r,color}
+  const SKIP=new Set(["defs","clippath","mask","symbol","marker","pattern","metadata","title","desc","style","lineargradient","radialgradient","filter","script"]);
+
+  function styleOf(el, inherited){
+    let stroke=el.getAttribute("stroke");
+    let fill=el.getAttribute("fill");
+    const st=el.getAttribute("style");
+    if(st){
+      const ms=st.match(/(?:^|;)\s*stroke\s*:\s*([^;]+)/); if(ms)stroke=ms[1];
+      const mf=st.match(/(?:^|;)\s*fill\s*:\s*([^;]+)/); if(mf)fill=mf[1];
+    }
+    const out={...inherited};
+    if(stroke!=null)out.stroke=stroke.trim();
+    if(fill!=null)out.fill=fill.trim();
+    return out;
+  }
+  function colorOf(sty){
+    const s=cssToRGB(sty.stroke);
+    if(s)return s;
+    if(sty.stroke==="none"||sty.stroke===undefined||sty.stroke==="")
+      return cssToRGB(sty.fill)||[0,0,0];
+    return [0,0,0];
+  }
+  function isConformal(m){
+    // uniform scale + rotation (+translation), no skew, no aspect distortion
+    const dot=m[0]*m[2]+m[1]*m[3];
+    const s1=Math.hypot(m[0],m[1]), s2=Math.hypot(m[2],m[3]);
+    return Math.abs(dot)<1e-9*(s1*s2+1e-12) && Math.abs(s1-s2)<1e-9*(s1+1e-12);
+  }
+  function addPolys(polys,m,color){
+    for(const p of polys){
+      const pts=p.pts.map(pt=>matApply(m,pt)).map(pt=>[pt[0]*scale,pt[1]*scale]);
+      // drop consecutive duplicates
+      const clean=[pts[0]];
+      for(let k=1;k<pts.length;k++) if(dist(pts[k],clean[clean.length-1])>1e-6) clean.push(pts[k]);
+      if(clean.length>1) shapes.push({type:"poly",pts:clean,closed:p.closed,color});
+    }
+  }
+
+  function walk(el,m,inheritedStyle){
+    const tag=el.nodeName.toLowerCase().replace(/^.*:/,"");
+    if(SKIP.has(tag))return;
+    const sty=styleOf(el,inheritedStyle);
+    if((el.getAttribute("display")||"").trim()==="none")return;
+    const tm=el.getAttribute("transform");
+    if(tm) m=matMul(m,parseTransform(tm));
+    const A=n=>parseFloat(el.getAttribute(n)||"0");
+    const color=colorOf(sty);
+
+    switch(tag){
+      case "svg": case "g": case "a": case "switch":{
+        for(const ch of Array.from(el.children||[])) walk(ch,m,sty);
+        return;}
+      case "path":{
+        const d=el.getAttribute("d");
+        if(d) addPolys(parsePathToPolys(d,tol),m,color);
+        return;}
+      case "rect":{
+        const x=A("x"),y=A("y"),w=A("width"),h=A("height");
+        let rx=el.getAttribute("rx"),ry=el.getAttribute("ry");
+        rx=rx==null?null:parseFloat(rx); ry=ry==null?null:parseFloat(ry);
+        if(rx==null&&ry!=null)rx=ry; if(ry==null&&rx!=null)ry=rx;
+        if(!w||!h)return;
+        let d;
+        if(rx&&ry){
+          rx=Math.min(rx,w/2); ry=Math.min(ry,h/2);
+          d=`M${x+rx},${y} L${x+w-rx},${y} A${rx},${ry} 0 0 1 ${x+w},${y+ry} L${x+w},${y+h-ry} A${rx},${ry} 0 0 1 ${x+w-rx},${y+h} L${x+rx},${y+h} A${rx},${ry} 0 0 1 ${x},${y+h-ry} L${x},${y+ry} A${rx},${ry} 0 0 1 ${x+rx},${y} Z`;
+        }else{
+          d=`M${x},${y} L${x+w},${y} L${x+w},${y+h} L${x},${y+h} Z`;
+        }
+        addPolys(parsePathToPolys(d,tol),m,color);
+        return;}
+      case "circle":{
+        const cx=A("cx"),cy=A("cy"),r=A("r");
+        if(!r)return;
+        if(isConformal(m)){
+          const c=matApply(m,[cx,cy]); const s=Math.hypot(m[0],m[1]);
+          shapes.push({type:"circle",cx:c[0]*scale,cy:c[1]*scale,r:r*s*scale,color});
+        }else{
+          const d=`M${cx-r},${cy} A${r},${r} 0 1 0 ${cx+r},${cy} A${r},${r} 0 1 0 ${cx-r},${cy} Z`;
+          addPolys(parsePathToPolys(d,tol),m,color);
+        }
+        return;}
+      case "ellipse":{
+        const cx=A("cx"),cy=A("cy"),rx=A("rx"),ry=A("ry");
+        if(!rx||!ry)return;
+        const d=`M${cx-rx},${cy} A${rx},${ry} 0 1 0 ${cx+rx},${cy} A${rx},${ry} 0 1 0 ${cx-rx},${cy} Z`;
+        addPolys(parsePathToPolys(d,tol),m,color);
+        return;}
+      case "line":{
+        addPolys([{pts:[[A("x1"),A("y1")],[A("x2"),A("y2")]],closed:false}],m,color);
+        return;}
+      case "polyline": case "polygon":{
+        const raw=(el.getAttribute("points")||"").trim().split(/[\s,]+/).map(Number);
+        const pts=[]; for(let k=0;k+1<raw.length;k+=2)pts.push([raw[k],raw[k+1]]);
+        if(pts.length>1) addPolys([{pts,closed:tag==="polygon"}],m,color);
+        return;}
+      case "use": case "text": case "image": case "tspan": case "foreignobject":{
+        skipped[tag]=(skipped[tag]||0)+1; return;}
+      default:{
+        // unknown container? walk children just in case
+        if(el.children&&el.children.length)
+          for(const ch of Array.from(el.children)) walk(ch,m,sty);
+        return;}
+    }
+  }
+  walk(root,rootM,{stroke:undefined,fill:undefined});
+  for(const k in skipped) warnings.push(`Skipped ${skipped[k]} <${k}> element${skipped[k]>1?"s":""} (not supported).`);
+  return {shapes,warnings,scale,scaleSrc};
+}
+
+/* ---------- shapes (mm, y-down) -> DXF R12 text ---------- */
+function shapesBBox(shapes){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  const acc=(x,y)=>{if(x<minX)minX=x;if(y<minY)minY=y;if(x>maxX)maxX=x;if(y>maxY)maxY=y;};
+  for(const s of shapes){
+    if(s.type==="circle"){acc(s.cx-s.r,s.cy-s.r);acc(s.cx+s.r,s.cy+s.r);}
+    else for(const p of s.pts)acc(p[0],p[1]);
+  }
+  if(minX===Infinity){minX=minY=0;maxX=maxY=1;}
+  return {minX,minY,maxX,maxY};
+}
+function fmt(n){ const r=Math.round(n*1e6)/1e6; return Object.is(r,-0)?"0":String(r); }
+function shapesToDXF(shapes){
+  const bb=shapesBBox(shapes);
+  const fx=x=>x-bb.minX, fy=y=>bb.maxY-y; // shift to origin + flip Y up
+  // layers grouped by ACI color
+  const layers=new Map();
+  const layerOf=(color)=>{
+    const aci=rgbToACI(color);
+    const name=aci===7?"0":("COLOR_"+aci);
+    if(!layers.has(name))layers.set(name,aci);
+    return {name,aci};
+  };
+  shapes.forEach(s=>layerOf(s.color));
+  if(!layers.size)layers.set("0",7);
+
+  const L=[];
+  const w=(code,val)=>{L.push(String(code),String(val));};
+  // HEADER
+  w(0,"SECTION");w(2,"HEADER");
+  w(9,"$ACADVER");w(1,"AC1009");
+  w(9,"$INSUNITS");w(70,4);
+  w(9,"$EXTMIN");w(10,fmt(0));w(20,fmt(0));w(30,0);
+  w(9,"$EXTMAX");w(10,fmt(bb.maxX-bb.minX));w(20,fmt(bb.maxY-bb.minY));w(30,0);
+  w(0,"ENDSEC");
+  // TABLES
+  w(0,"SECTION");w(2,"TABLES");
+  w(0,"TABLE");w(2,"LTYPE");w(70,1);
+  w(0,"LTYPE");w(2,"CONTINUOUS");w(70,0);w(3,"Solid line");w(72,65);w(73,0);w(40,0);
+  w(0,"ENDTAB");
+  w(0,"TABLE");w(2,"LAYER");w(70,layers.size);
+  for(const [name,aci] of layers){
+    w(0,"LAYER");w(2,name);w(70,0);w(62,aci);w(6,"CONTINUOUS");
+  }
+  w(0,"ENDTAB");
+  w(0,"ENDSEC");
+  // ENTITIES
+  w(0,"SECTION");w(2,"ENTITIES");
+  let nPoly=0,nCirc=0,nLine=0;
+  for(const s of shapes){
+    const {name,aci}=layerOf(s.color);
+    if(s.type==="circle"){
+      w(0,"CIRCLE");w(8,name);w(62,aci);
+      w(10,fmt(fx(s.cx)));w(20,fmt(fy(s.cy)));w(30,0);w(40,fmt(s.r));
+      nCirc++;
+    }else if(s.pts.length===2&&!s.closed){
+      w(0,"LINE");w(8,name);w(62,aci);
+      w(10,fmt(fx(s.pts[0][0])));w(20,fmt(fy(s.pts[0][1])));w(30,0);
+      w(11,fmt(fx(s.pts[1][0])));w(21,fmt(fy(s.pts[1][1])));w(31,0);
+      nLine++;
+    }else{
+      let pts=s.pts;
+      if(s.closed&&dist(pts[0],pts[pts.length-1])<1e-9) pts=pts.slice(0,-1);
+      w(0,"POLYLINE");w(8,name);w(62,aci);w(66,1);w(70,s.closed?1:0);w(10,0);w(20,0);w(30,0);
+      for(const p of pts){
+        w(0,"VERTEX");w(8,name);w(10,fmt(fx(p[0])));w(20,fmt(fy(p[1])));w(30,0);
+      }
+      w(0,"SEQEND");w(8,name);
+      nPoly++;
+    }
+  }
+  w(0,"ENDSEC");w(0,"EOF");
+  return {text:L.join("\r\n")+"\r\n",
+          stats:{polylines:nPoly,circles:nCirc,lines:nLine,
+                 widthMM:bb.maxX-bb.minX,heightMM:bb.maxY-bb.minY,layers:layers.size}};
+}
+
+/* ---------- DXF parsing ---------- */
+function parseDXF(text){
+  const lines=text.split(/\r\n|\r|\n/);
+  const pairs=[];
+  for(let i=0;i+1<lines.length;i+=2){
+    const code=parseInt(lines[i].trim(),10);
+    if(Number.isNaN(code))continue;
+    pairs.push([code,lines[i+1]]);
+  }
+  let i=0;
+  const header={insunits:null};
+  const entities=[];
+  const skipped={};
+  function readEntity(type){
+    // gather codes until next 0
+    const e={type,codes:[]};
+    while(i<pairs.length&&pairs[i][0]!==0){ e.codes.push(pairs[i]); i++; }
+    return e;
+  }
+  function val(e,code,def){ const f=e.codes.find(c=>c[0]===code); return f?parseFloat(f[1]):def; }
+  function vals(e,code){ return e.codes.filter(c=>c[0]===code).map(c=>parseFloat(c[1])); }
+  function strval(e,code,def){ const f=e.codes.find(c=>c[0]===code); return f?String(f[1]).trim():def; }
+
+  while(i<pairs.length){
+    const [code,v]=pairs[i];
+    if(code===0&&v.trim()==="SECTION"){
+      i++;
+      const name=(pairs[i]&&pairs[i][0]===2)?pairs[i][1].trim():""; i++;
+      if(name==="HEADER"){
+        while(i<pairs.length&&!(pairs[i][0]===0&&pairs[i][1].trim()==="ENDSEC")){
+          if(pairs[i][0]===9&&pairs[i][1].trim()==="$INSUNITS"){
+            // next 70
+            let j=i+1;
+            while(j<pairs.length&&pairs[j][0]!==9&&pairs[j][0]!==0){
+              if(pairs[j][0]===70){header.insunits=parseInt(pairs[j][1],10);break;}
+              j++;
+            }
+          }
+          i++;
+        }
+      }else if(name==="ENTITIES"||name==="BLOCKS"){
+        const inBlocks=name==="BLOCKS";
+        while(i<pairs.length){
+          const [c,t]=pairs[i];
+          if(c===0&&t.trim()==="ENDSEC"){break;}
+          if(c===0){
+            const type=t.trim(); i++;
+            if(inBlocks){ // we don't expand blocks; skim through
+              continue;
+            }
+            const known=["LINE","CIRCLE","ARC","LWPOLYLINE","POLYLINE","VERTEX","SEQEND","ELLIPSE","SPLINE","POINT"];
+            const e=readEntity(type);
+            e.layer=strval(e,8,"0");
+            e.color=val(e,62,256); // 256 = bylayer
+            if(known.includes(type)) entities.push({e,val,vals,strval});
+            else skipped[type]=(skipped[type]||0)+1;
+            continue;
+          }
+          i++;
+        }
+      }else{
+        while(i<pairs.length&&!(pairs[i][0]===0&&pairs[i][1].trim()==="ENDSEC"))i++;
+      }
+    }
+    i++;
+  }
+  return {pairs,header,entities,skipped,val:(e,c,d)=>{const f=e.codes.find(x=>x[0]===c);return f?parseFloat(f[1]):d;},
+          vals:(e,c)=>e.codes.filter(x=>x[0]===c).map(x=>parseFloat(x[1]))};
+}
+
+/* ---------- NURBS evaluation for SPLINE ---------- */
+function evalNURBS(degree,knots,ctrl,weights,nSamples){
+  const n=ctrl.length-1;
+  if(!weights||weights.length!==ctrl.length)weights=ctrl.map(()=>1);
+  const t0=knots[degree], t1=knots[knots.length-1-degree];
+  const out=[];
+  for(let s=0;s<=nSamples;s++){
+    let t=t0+(t1-t0)*s/nSamples;
+    if(s===nSamples)t=t1-1e-12*(t1-t0||1);
+    // find span
+    let k=degree;
+    while(k<knots.length-degree-2&&t>=knots[k+1])k++;
+    // de Boor
+    const d=[]; const wts=[];
+    for(let j=0;j<=degree;j++){
+      const idx=k-degree+j;
+      d[j]=[ctrl[idx][0]*weights[idx],ctrl[idx][1]*weights[idx]];
+      wts[j]=weights[idx];
+    }
+    for(let r=1;r<=degree;r++){
+      for(let j=degree;j>=r;j--){
+        const idx=k-degree+j;
+        const den=knots[idx+degree-r+1]-knots[idx];
+        const a=den===0?0:(t-knots[idx])/den;
+        d[j]=[(1-a)*d[j-1][0]+a*d[j][0],(1-a)*d[j-1][1]+a*d[j][1]];
+        wts[j]=(1-a)*wts[j-1]+a*wts[j];
+      }
+    }
+    out.push([d[degree][0]/wts[degree],d[degree][1]/wts[degree]]);
+  }
+  return out;
+}
+
+/* ---------- DXF -> SVG ---------- */
+function bulgeSamples(p1,p2,b,n){
+  // sample arc between p1,p2 with bulge b (DXF y-up coords) for bbox purposes
+  const theta=4*Math.atan(b);
+  const d=dist(p1,p2); if(d<1e-12||Math.abs(b)<1e-12)return [p2];
+  const r=d/(2*Math.sin(Math.abs(theta)/2));
+  // center: rotate chord midpoint perpendicular
+  const mx=(p1[0]+p2[0])/2,my=(p1[1]+p2[1])/2;
+  const h=Math.sqrt(Math.max(0,r*r-(d/2)*(d/2)))*(Math.abs(theta)>Math.PI?-1:1);
+  const ux=(p2[0]-p1[0])/d, uy=(p2[1]-p1[1])/d;
+  const sgn=b>0?1:-1;
+  const cx=mx-sgn*h*uy, cy=my+sgn*h*ux;
+  const a1=Math.atan2(p1[1]-cy,p1[0]-cx);
+  const out=[];
+  for(let k=1;k<=n;k++){
+    const a=a1+theta*k/n;
+    out.push([cx+r*Math.cos(a),cy+r*Math.sin(a)]);
+  }
+  return out;
+}
+function dxfToSVG(text,opts){
+  opts=opts||{};
+  const parsed=parseDXF(text);
+  const {entities,skipped,header}=parsed;
+  const V=(e,c,d)=>parsed.val(e.e,c,d);
+  const VS=(e,c)=>parsed.vals(e.e,c);
+  if(!entities.length&&!Object.keys(skipped).length)
+    throw new Error("No entities found — is this a DXF file?");
+
+  const unitsMap={0:1,1:25.4,2:304.8,4:1,5:10,6:1000,8:0.0254,9:0.0254*0.001,10:914.4,14:0.1};
+  const u=header.insunits;
+  const toMM=(u!=null&&unitsMap[u]!=null)?unitsMap[u]:1;
+  const unitNote=(u==null||u===0)?"unitless — assumed mm":({1:"inches",2:"feet",4:"mm",5:"cm",6:"m"}[u]||("code "+u));
+
+  // assemble drawable primitives in DXF coords (y-up)
+  // prim: {kind:'pline', segs:[{p,bulge}], closed, color}
+  //       {kind:'circle',c,r,color} {kind:'arc',c,r,a0,a1,color}
+  const prims=[]; const counts={};
+  const tally=k=>{counts[k]=(counts[k]||0)+1;};
+  let pendingPoly=null;
+  for(const ent of entities){
+    const t=ent.e.type;
+    const col=ent.e.color===256||ent.e.color==null?7:ent.e.color;
+    if(t==="LINE"){
+      prims.push({kind:"pline",segs:[{p:[V(ent,10,0),V(ent,20,0)],bulge:0},{p:[V(ent,11,0),V(ent,21,0)],bulge:0}],closed:false,color:col});
+      tally("LINE");
+    }else if(t==="CIRCLE"){
+      prims.push({kind:"circle",c:[V(ent,10,0),V(ent,20,0)],r:V(ent,40,0),color:col});
+      tally("CIRCLE");
+    }else if(t==="ARC"){
+      prims.push({kind:"arc",c:[V(ent,10,0),V(ent,20,0)],r:V(ent,40,0),a0:V(ent,50,0),a1:V(ent,51,0),color:col});
+      tally("ARC");
+    }else if(t==="LWPOLYLINE"){
+      const xs=VS(ent,10),ys=VS(ent,20);
+      // bulge codes attach to the preceding vertex; rebuild in order
+      const segs=[]; let bi=0;
+      const codes=ent.e.codes; let cx=null;
+      let cur=null;
+      for(const [c,v] of codes){
+        if(c===10){ if(cur)segs.push(cur); cur={p:[parseFloat(v),0],bulge:0}; }
+        else if(c===20&&cur){ cur.p[1]=parseFloat(v); }
+        else if(c===42&&cur){ cur.bulge=parseFloat(v); }
+      }
+      if(cur)segs.push(cur);
+      const closed=(V(ent,70,0)&1)===1;
+      if(segs.length>1){prims.push({kind:"pline",segs,closed,color:col});tally("LWPOLYLINE");}
+    }else if(t==="POLYLINE"){
+      pendingPoly={segs:[],closed:(V(ent,70,0)&1)===1,color:col};
+    }else if(t==="VERTEX"&&pendingPoly){
+      pendingPoly.segs.push({p:[V(ent,10,0),V(ent,20,0)],bulge:V(ent,42,0)});
+    }else if(t==="SEQEND"){
+      if(pendingPoly&&pendingPoly.segs.length>1){
+        prims.push({kind:"pline",...pendingPoly});tally("POLYLINE");
+      }
+      pendingPoly=null;
+    }else if(t==="ELLIPSE"){
+      const c=[V(ent,10,0),V(ent,20,0)];
+      const mj=[V(ent,11,1),V(ent,21,0)];
+      const ratio=V(ent,40,1);
+      const t0=V(ent,41,0),t1=V(ent,42,Math.PI*2);
+      const segs=[]; const N=64;
+      for(let k=0;k<=N;k++){
+        const tt=t0+(t1-t0)*k/N;
+        const px=c[0]+Math.cos(tt)*mj[0]-Math.sin(tt)*ratio*mj[1];
+        const py=c[1]+Math.cos(tt)*mj[1]+Math.sin(tt)*ratio*mj[0];
+        segs.push({p:[px,py],bulge:0});
+      }
+      const closed=Math.abs((t1-t0)-Math.PI*2)<1e-6;
+      prims.push({kind:"pline",segs,closed,color:col});
+      tally("ELLIPSE");
+    }else if(t==="SPLINE"){
+      const degree=V(ent,71,3)|0;
+      const knots=VS(ent,40);
+      const cxs=VS(ent,10),cys=VS(ent,20);
+      const wts=VS(ent,41);
+      const ctrl=cxs.map((x,k)=>[x,cys[k]]);
+      let pts;
+      if(ctrl.length>degree&&knots.length===ctrl.length+degree+1){
+        pts=evalNURBS(degree,knots,ctrl,wts.length===ctrl.length?wts:null,Math.max(48,ctrl.length*8));
+      }else{
+        const fx=VS(ent,11),fy=VS(ent,21);
+        pts=fx.length>1?fx.map((x,k)=>[x,fy[k]]):ctrl;
+      }
+      if(pts.length>1){
+        prims.push({kind:"pline",segs:pts.map(p=>({p,bulge:0})),closed:(V(ent,70,0)&1)===1,color:col});
+        tally("SPLINE");
+      }
+    }else if(t==="POINT"){
+      skipped.POINT=(skipped.POINT||0)+1;
+    }
+  }
+  if(!prims.length) throw new Error("No drawable entities found in this DXF.");
+
+  // bbox in DXF coords
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  const acc=(x,y)=>{if(x<minX)minX=x;if(y<minY)minY=y;if(x>maxX)maxX=x;if(y>maxY)maxY=y;};
+  for(const p of prims){
+    if(p.kind==="circle"){acc(p.c[0]-p.r,p.c[1]-p.r);acc(p.c[0]+p.r,p.c[1]+p.r);}
+    else if(p.kind==="arc"){
+      let a0=p.a0,a1=p.a1; while(a1<=a0)a1+=360;
+      const N=Math.max(8,Math.ceil((a1-a0)/10));
+      for(let k=0;k<=N;k++){const a=(a0+(a1-a0)*k/N)*Math.PI/180;acc(p.c[0]+p.r*Math.cos(a),p.c[1]+p.r*Math.sin(a));}
+    }else{
+      for(let k=0;k<p.segs.length;k++){
+        const s=p.segs[k];acc(s.p[0],s.p[1]);
+        const nxt=p.segs[k+1]||(p.closed?p.segs[0]:null);
+        if(nxt&&Math.abs(s.bulge)>1e-12)
+          for(const q of bulgeSamples(s.p,nxt.p,s.bulge,12))acc(q[0],q[1]);
+      }
+    }
+  }
+  const W=(maxX-minX)*toMM, H=(maxY-minY)*toMM;
+  const fx=x=>(x-minX)*toMM, fy=y=>(maxY-y)*toMM; // flip to y-down
+
+  const F=n=>{const r=Math.round(n*1e4)/1e4;return Object.is(r,-0)?"0":String(r);};
+  const parts=[];
+  for(const p of prims){
+    const stroke=aciToHex(p.color);
+    if(p.kind==="circle"){
+      parts.push(`<circle cx="${F(fx(p.c[0]))}" cy="${F(fy(p.c[1]))}" r="${F(p.r*toMM)}" stroke="${stroke}"/>`);
+    }else if(p.kind==="arc"){
+      let a0=p.a0,a1=p.a1; while(a1<=a0)a1+=360;
+      const sp=[p.c[0]+p.r*Math.cos(a0*Math.PI/180),p.c[1]+p.r*Math.sin(a0*Math.PI/180)];
+      const ep=[p.c[0]+p.r*Math.cos(a1*Math.PI/180),p.c[1]+p.r*Math.sin(a1*Math.PI/180)];
+      const laf=(a1-a0)>180?1:0;
+      // DXF arcs run CCW (y-up); after the y-flip they render CCW with sweep=0
+      parts.push(`<path d="M ${F(fx(sp[0]))},${F(fy(sp[1]))} A ${F(p.r*toMM)},${F(p.r*toMM)} 0 ${laf} 0 ${F(fx(ep[0]))},${F(fy(ep[1]))}" stroke="${stroke}"/>`);
+    }else{
+      let d=`M ${F(fx(p.segs[0].p[0]))},${F(fy(p.segs[0].p[1]))}`;
+      const n=p.segs.length;
+      const lim=p.closed?n:n-1;
+      for(let k=0;k<lim;k++){
+        const s=p.segs[k], nxt=p.segs[(k+1)%n];
+        if(Math.abs(s.bulge)>1e-12){
+          const theta=4*Math.atan(s.bulge);
+          const dch=dist(s.p,nxt.p);
+          const r=dch/(2*Math.sin(Math.abs(theta)/2))*toMM;
+          const laf=Math.abs(theta)>Math.PI?1:0;
+          const sweep=s.bulge>0?0:1; // CCW in y-up becomes sweep 0 after flip
+          d+=` A ${F(r)},${F(r)} 0 ${laf} ${sweep} ${F(fx(nxt.p[0]))},${F(fy(nxt.p[1]))}`;
+        }else{
+          d+=` L ${F(fx(nxt.p[0]))},${F(fy(nxt.p[1]))}`;
+        }
+      }
+      if(p.closed)d+=" Z";
+      parts.push(`<path d="${d}" stroke="${stroke}"/>`);
+    }
+  }
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${F(W)}mm" height="${F(H)}mm" viewBox="0 0 ${F(W)} ${F(H)}">\n`+
+    `<g fill="none" stroke-width="0.1" stroke-linecap="round" stroke-linejoin="round">\n`+
+    parts.join("\n")+`\n</g>\n</svg>\n`;
+  const warnings=Object.entries(skipped).map(([k,v])=>`Skipped ${v} ${k} entit${v>1?"ies":"y"} (not supported).`);
+  return {svg,stats:{counts,widthMM:W,heightMM:H,unitNote},warnings};
+}
+
+/* ---------- preview renderer for SVG->DXF results ---------- */
+function shapesToPreviewSVG(shapes){
+  const bb=shapesBBox(shapes);
+  const W=bb.maxX-bb.minX,H=bb.maxY-bb.minY;
+  const F=n=>String(Math.round(n*1e3)/1e3);
+  const parts=[];
+  for(const s of shapes){
+    const stroke=aciToHex(rgbToACI(s.color));
+    if(s.type==="circle"){
+      parts.push(`<circle cx="${F(s.cx-bb.minX)}" cy="${F(s.cy-bb.minY)}" r="${F(s.r)}" stroke="${stroke}"/>`);
+    }else{
+      const d="M "+s.pts.map(p=>`${F(p[0]-bb.minX)},${F(p[1]-bb.minY)}`).join(" L ")+(s.closed?" Z":"");
+      parts.push(`<path d="${d}" stroke="${stroke}"/>`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${F(W)}mm" height="${F(H)}mm" viewBox="0 0 ${F(W)} ${F(H)}"><g fill="none" stroke-width="${F(Math.max(W,H)/600)}">${parts.join("")}</g></svg>`;
+}
+
+if(typeof module!=="undefined"&&module.exports){
+  module.exports={parseTransform,parsePathToPolys,svgToShapes,shapesToDXF,parseDXF,dxfToSVG,shapesToPreviewSVG,evalNURBS,matMul,matApply};
+}
+</script>
+
+<script id="ui">
+/* ========================= UI GLUE ========================= */
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const drop=$("drop"), fileInput=$("file"), logEl=$("log");
+const previewWrap=$("previewWrap"), previewBox=$("previewBox");
+const outName=$("outName"), outDim=$("outDim");
+const downloadBtn=$("downloadBtn"), resetBtn=$("resetBtn");
+const tol=$("tol"), tolOut=$("tolOut"), units=$("units");
+
+let result=null; // {blobText, filename, mime}
+let lastFile=null;
+
+tol.addEventListener("input",()=>{tolOut.textContent=Number(tol.value).toFixed(2)+" mm";});
+
+function log(items){
+  logEl.innerHTML="";
+  if(!items.length){logEl.innerHTML='<li class="empty">Nothing to report.</li>';return;}
+  for(const it of items){
+    const li=document.createElement("li");
+    li.textContent=it.text; if(it.warn)li.className="warn";
+    logEl.appendChild(li);
+  }
+}
+function fail(msg){
+  log([{text:msg,warn:true},{text:"Nothing was converted. Try another file or adjust settings.",warn:false}]);
+  previewWrap.classList.remove("active");
+  drop.style.display="flex";
+}
+
+function convert(file){
+  lastFile=file;
+  const name=file.name||"file";
+  const ext=(name.split(".").pop()||"").toLowerCase();
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const text=String(reader.result);
+    try{
+      const isSVG = ext==="svg" || /<svg[\s>]/i.test(text.slice(0,4000));
+      const isDXF = ext==="dxf" || /(^|\n)\s*0\s*\r?\nSECTION/.test(text.slice(0,2000));
+      if(isSVG) doSVGtoDXF(text,name);
+      else if(isDXF) doDXFtoSVG(text,name);
+      else fail("Couldn't tell whether this is an SVG or a DXF. Use a .svg or .dxf extension.");
+    }catch(err){
+      fail("Conversion failed: "+err.message);
+      console.error(err);
+    }
+  };
+  reader.onerror=()=>fail("Couldn't read that file.");
+  reader.readAsText(file);
+}
+
+function doSVGtoDXF(text,name){
+  const res=svgToShapes(text,{tol:Number(tol.value),units:units.value});
+  if(!res.shapes.length)throw new Error("No drawable geometry found in this SVG.");
+  const dxf=shapesToDXF(res.shapes);
+  const base=name.replace(/\.svg$/i,"");
+  result={text:dxf.text,filename:base+".dxf",mime:"application/dxf"};
+  showPreview(shapesToPreviewSVG(res.shapes),result.filename,
+    `${dxf.stats.widthMM.toFixed(2)} × ${dxf.stats.heightMM.toFixed(2)} mm · DXF R12`);
+  const notes=[
+    {text:`Scale: ${res.scaleSrc} (1 unit → ${res.scale.toFixed(5)} mm)`},
+    {text:`Wrote ${dxf.stats.polylines} polylines, ${dxf.stats.circles} circles, ${dxf.stats.lines} lines on ${dxf.stats.layers} layer${dxf.stats.layers>1?"s":""}.`},
+    {text:"Curves flattened at "+Number(tol.value).toFixed(2)+" mm tolerance."},
+  ];
+  res.warnings.forEach(wn=>notes.push({text:wn,warn:true}));
+  log(notes);
+  downloadBtn.textContent="Download "+result.filename;
+}
+
+function doDXFtoSVG(text,name){
+  const res=dxfToSVG(text,{});
+  const base=name.replace(/\.dxf$/i,"");
+  result={text:res.svg,filename:base+".svg",mime:"image/svg+xml"};
+  showPreview(res.svg,result.filename,
+    `${res.stats.widthMM.toFixed(2)} × ${res.stats.heightMM.toFixed(2)} mm · units: ${res.stats.unitNote}`);
+  const parts=Object.entries(res.stats.counts).map(([k,v])=>`${v} ${k}`).join(", ");
+  const notes=[{text:"Converted: "+parts+"."},
+               {text:"Arcs and bulges kept as true arcs (no flattening needed this direction)."}];
+  res.warnings.forEach(wn=>notes.push({text:wn,warn:true}));
+  log(notes);
+  downloadBtn.textContent="Download "+result.filename;
+}
+
+function showPreview(svgMarkup,fname,dim){
+  previewBox.innerHTML=svgMarkup;
+  const sv=previewBox.querySelector("svg");
+  if(sv){sv.removeAttribute("width");sv.removeAttribute("height");sv.style.width="100%";sv.style.height="auto";sv.style.maxHeight="52vh";}
+  outName.textContent=fname;
+  outDim.textContent=dim;
+  drop.style.display="none";
+  previewWrap.classList.add("active");
+}
+
+downloadBtn.addEventListener("click",()=>{
+  if(!result)return;
+  const blob=new Blob([result.text],{type:result.mime});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=result.filename;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+});
+resetBtn.addEventListener("click",()=>{
+  result=null; previewWrap.classList.remove("active");
+  drop.style.display="flex";
+  log([{text:"Waiting for a file."}]);
+  fileInput.value="";
+});
+
+drop.addEventListener("click",()=>fileInput.click());
+drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fileInput.click();}});
+fileInput.addEventListener("change",()=>{if(fileInput.files[0])convert(fileInput.files[0]);});
+["dragenter","dragover"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("dragover");}));
+["dragleave","drop"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();if(ev==="dragleave"&&e.target!==document.documentElement)return;drop.classList.remove("dragover");}));
+document.addEventListener("drop",e=>{
+  e.preventDefault();drop.classList.remove("dragover");
+  const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  if(f)convert(f);
+});
+// re-convert when settings change and a file is loaded
+[tol,units].forEach(el=>el.addEventListener("change",()=>{if(lastFile)convert(lastFile);}));
+})();
+</script>
+</body>
+</html>
